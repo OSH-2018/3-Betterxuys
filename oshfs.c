@@ -1,6 +1,7 @@
 #define FUSE_USE_VERSION 26
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <errno.h>
 #include <fuse.h>
 #include <sys/mman.h>
@@ -12,7 +13,8 @@
 
 // dan wei : byte
 // each block start with 2 int num :
-// int[0] for next block num   if(int[1] == -1) it is last block
+// int[0] for next block num   
+// if(int[0] == -1) it is last block
 // int[1] for block used int[0] byte
 
 typedef struct fn {
@@ -69,6 +71,7 @@ int find_blank_block(){
 void init_block(int blocknum){
 	mem[blocknum] = mmap(NULL, blocksize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     memset(mem[blocknum], 0, blocksize);
+    *(int*)mem[blocknum] = -1;
     *((int*)mem[blocknum] + 1) = 2 * sizeof(int);
     return;
 }
@@ -87,48 +90,25 @@ static void create_filenode(const char *filename, const struct stat *st)
     new->st = (struct stat *)malloc(sizeof(struct stat));
     memcpy(new->st, st, sizeof(struct stat));*/
     
-    //filenode *new;
     int i = find_blank_block();
-    //if(i == -1) printf("there is no blank block");
+    if(i == -1) printf("there is no blank block");
     init_block(i);
-    filenode *new = (filenode*)mymalloc(i ,sizeof(filenode));
-    new->filename = (char*)mymalloc(i, strlen(filename) + 1);
-    memcpy(new->filename, filename, strlen(filename) + 1);
-    new->st = (struct stat *)mymalloc(i, sizeof(struct stat));
-    memcpy(new->st, st, sizeof(struct stat));
+    filenode *newnode = (filenode*)mymalloc(i ,sizeof(filenode));
+    newnode->filename = (char*)mymalloc(i, strlen(filename) + 1);
+    memcpy(newnode->filename, filename, strlen(filename) + 1);
+    newnode->st = (struct stat *)mymalloc(i, sizeof(struct stat));
+    memcpy(newnode->st, st, sizeof(struct stat));
     
-    new->head_blocknum = i;
-    new->content_start_at = *((int*)mem[i] + 1);
+    newnode->head_blocknum = i;
+    newnode->content_start_at = *((int*)mem[i] + 1);
     // include 2 * sizeof(int) and fn used size
     
-    new->next = root;
-    //new->content = NULL;
-    root = new;
+    newnode->next = root;
+    root = newnode;
 }
 
 static void *oshfs_init(struct fuse_conn_info *conn)
-{
-    /*size_t blocknr = sizeof(mem) / sizeof(mem[0]);
-    size_t blocksize = size / blocknr;
-    // Demo 1
-    for(int i = 0; i < blocknr; i++) {
-        mem[i] = mmap(NULL, blocksize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        memset(mem[i], 0, blocksize);
-    }
-    for(int i = 0; i < blocknr; i++) {
-        munmap(mem[i], blocksize);
-    }
-    // Demo 2
-    mem[0] = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    for(int i = 0; i < blocknr; i++) {
-        mem[i] = (char *)mem[0] + blocksize * i;
-        memset(mem[i], 0, blocksize);
-    }
-    for(int i = 0; i < blocknr; i++) {
-        munmap(mem[i], blocksize);
-    }*/
-    
-    
+{ 
     return NULL;
 }
 
@@ -183,11 +163,15 @@ static int oshfs_write(const char *path, const char *buf, size_t size, off_t off
     node->content = realloc(node->content, offset + size);
     memcpy(node->content + offset, buf, size);*/
     
+    /*mywrite*/
+    printf("use write\n");
     filenode *node = get_filenode(path);
     node->st->st_size = offset + size;
     int i; //just temp
     int cur_block = node->head_blocknum;
     int offset_blocknr = 1;
+    //cur_block is where offset is
+	//offset_blocknr is number of passed blocks (offset pass how many blocks)
     int now_space = 0;
     now_space += blocksize - node->content_start_at;
     while(now_space < offset){
@@ -201,9 +185,7 @@ static int oshfs_write(const char *path, const char *buf, size_t size, off_t off
 		cur_block = next_block(cur_block);
 		offset_blocknr++;
 	}
-	
-	//cur_block is where offset is
-	//offset_blocknr is number of passed blocks (offset pass how many blocks)
+	//offset_in_block is offset in last block 
 	int offset_in_block = offset;
 	if(offset_blocknr == 1){
 		offset_in_block = offset;
@@ -233,7 +215,7 @@ static int oshfs_write(const char *path, const char *buf, size_t size, off_t off
 		tempsize -= writesize;
 		complete_size += writesize;
 	}
-	// blocks follow
+	// following blocks
 	while(tempsize > 0){
 		if(next_block(cur_block) == -1){
 			i = find_blank_block();
@@ -259,18 +241,33 @@ static int oshfs_truncate(const char *path, off_t size)
     node->content = realloc(node->content, size);
     return 0;*/
     
+    printf("use truncate\n");
+    
     filenode *node = get_filenode(path);
     node->st->st_size = size;
-    
+    int i;
     int now_space = blocksize - node->content_start_at;
     int cur_block = node->head_blocknum;
     while(now_space < size){
+    	if(next_block(cur_block) == -1){
+    		printf("truncate error: last block\n");
+    		/*??? truncate want to have larger space ???*/
+    		i = find_blank_block();
+			init_block(i);
+			*(int*)mem[cur_block] = i;
+    		*(int*)mem[i] = -1;
+		}
     	cur_block = next_block(cur_block);
     	now_space += blocksize - 2*sizeof(int);
 	}
+	
+	// now_space - size = size after size in a block
+    // blocksize - (now_space - size) = node->content_start_at + offset_in_block
 	*((int*)mem[cur_block]+1) = blocksize-(now_space-size);
-	//free
-	int i = next_block(cur_block);
+	
+	//free memory
+	printf("truncate free noused block\n");
+	i = next_block(cur_block);
 	int next;
 	while(i != -1){
 		next = next_block(i);
@@ -278,6 +275,7 @@ static int oshfs_truncate(const char *path, off_t size)
 		mem[i] = NULL;
 		i = next;
 	}
+	
 	//last pointer
 	*(int*)mem[cur_block] = -1;
     
@@ -293,13 +291,12 @@ static int oshfs_read(const char *path, char *buf, size_t size, off_t offset, st
     memcpy(buf, node->content + offset, ret);
     return ret;*/
     
+    printf("use read\n");
     filenode *node = get_filenode(path);
     int ret = size;
     if(offset + size > node->st->st_size)
         ret = node->st->st_size - offset;
         
-    //find an easy way to code suddenly 
-    // it is hard to compute by brain but it is easy to code
     int now_space = blocksize - node->content_start_at;
     int cur_block = node->head_blocknum;
     while (now_space < offset){
@@ -308,6 +305,8 @@ static int oshfs_read(const char *path, char *buf, size_t size, off_t offset, st
     }
     //cur_block is where offset is
     
+    //find an easy way to code suddenly 
+    // it is hard to compute by brain but it is easy to code
     // now_space - offset = size after offset in a block
     // blocksize - (now_space - offset) = node->content_start_at + offset_in_block
     int readsize = min(ret, now_space-offset);
@@ -324,12 +323,20 @@ static int oshfs_read(const char *path, char *buf, size_t size, off_t offset, st
 
 static int oshfs_unlink(const char *path)
 {
+	printf("use unlink\n");
     filenode *node = get_filenode(path);
     int cur_block = node->head_blocknum;
     filenode *temp = root;
-    while(temp->next != node)
-    	temp = temp->next;
-    temp->next = node->next;
+    if(root == node){
+    	root = root->next;
+    	printf("deleted link list head node!\n");
+	}
+	else{
+		while(temp->next != node)
+    		temp = temp->next;
+		temp->next = node->next;
+	}
+    printf("deleted link list node!\n");
     
     int next;
     while(cur_block != -1){
@@ -338,6 +345,7 @@ static int oshfs_unlink(const char *path)
         mem[cur_block] = NULL;
         cur_block = next;
     }
+    printf("free memory!\n");
     return 0;
 }
 
