@@ -6,6 +6,11 @@
 #include <fuse.h>
 #include <sys/mman.h>
 
+#define root ((filenode*)((char*)mem[0] + 2*sizeof(int)))->next
+//mem[0] store root
+#define FILE_START_AT 1
+//mem[1] ..... store file
+
 #define BLOCKNR 65536
 #define BLOCKSIZE 65536
 // 65536 = 64 * 1024
@@ -30,7 +35,7 @@ size_t blocksize = BLOCKSIZE;
 static const size_t size = 4 * 1024 * 1024 * (size_t)1024;
 static void *mem[BLOCKNR];
 
-static filenode *root = NULL;
+//static filenode *root = NULL;
 
 static filenode *get_filenode(const char *name)
 {
@@ -60,9 +65,10 @@ int max(int a, int b){
 	return (a>b)? a:b;
 }
 
+
 int find_blank_block(){
 	int i;
-	for(i = 0;i < BLOCKNR; i++){
+	for(i = FILE_START_AT;i < BLOCKNR; i++){
 		if(!mem[i]) return i;
 	}
 	return -1;
@@ -109,6 +115,10 @@ static void create_filenode(const char *filename, const struct stat *st)
 
 static void *oshfs_init(struct fuse_conn_info *conn)
 { 
+	init_block(0);
+	//temp->next is root
+	filenode *temp = (filenode*)mymalloc(0, sizeof(filenode));
+	temp->next = NULL;
     return NULL;
 }
 
