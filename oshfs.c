@@ -8,7 +8,6 @@
 
 #define root ((filenode*)((char*)mem[0] + 2*sizeof(int)))->next
 //mem[0] store root
-#define FILE_START_AT 1
 //mem[1] ..... store file
 
 #define BLOCKNR 65536
@@ -36,6 +35,8 @@ static const size_t size = 4 * 1024 * 1024 * (size_t)1024;
 static void *mem[BLOCKNR];
 
 //static filenode *root = NULL;
+
+int find_start_at = 1; 
 
 static filenode *get_filenode(const char *name)
 {
@@ -68,8 +69,11 @@ int max(int a, int b){
 
 int find_blank_block(){
 	int i;
-	for(i = FILE_START_AT;i < BLOCKNR; i++){
-		if(!mem[i]) return i;
+	for(i = find_start_at;i < BLOCKNR; i=(i+1)%BLOCKNR){
+		if(!mem[i]){
+			find_start_at = (i+1) % BLOCKNR;
+			return i;
+		}
 	}
 	return -1;
 }
