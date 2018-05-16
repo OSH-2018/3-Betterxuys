@@ -194,7 +194,9 @@ static int oshfs_write(const char *path, const char *buf, size_t size, off_t off
     /*mywrite*/
     printf("use write\n");
     filenode *node = get_filenode(path);
-    node->st->st_size = offset + size;
+    if(offset + size > node->st->st_size){
+    	node->st->st_size = offset + size;
+	}
     int i; //just temp
     int cur_block = node->head_blocknum;
     int offset_blocknr = 1;
