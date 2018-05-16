@@ -7,7 +7,8 @@
 #include <sys/mman.h>
 
 #define root ((filenode*)((char*)mem[0] + 2*sizeof(int)))->next
-//mem[0] store root
+#define find_start_at *(int*)mem[0]
+//mem[0] store last found blank block num and root
 //mem[1] ..... store file
 
 #define BLOCKNR 65536
@@ -36,7 +37,7 @@ static void *mem[BLOCKNR];
 
 //static filenode *root = NULL;
 
-int find_start_at = 1; 
+//int find_start_at = 1; 
 
 static filenode *get_filenode(const char *name)
 {
@@ -69,21 +70,25 @@ int max(int a, int b){
 
 int find_blank_block(){
 	int i;
-	for(i = find_start_at;i < BLOCKNR; i=(i+1)%BLOCKNR){
+	for(i = (find_start_at + 1)%BLOCKNR ;i != find_start_at; i=(i+1)%BLOCKNR){
 		if(!mem[i]){
-			find_start_at = (i+1) % BLOCKNR;
+			find_start_at = i;
 			return i;
 		}
 	}
 	return -1;
 }
 
-void init_block(int blocknum){
+int init_block(int blocknum){
 	mem[blocknum] = mmap(NULL, blocksize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if(!mem[blocknum]){
+		printf("mmap failed!\n");
+		return -1;
+	}
     memset(mem[blocknum], 0, blocksize);
     *(int*)mem[blocknum] = -1;
     *((int*)mem[blocknum] + 1) = 2 * sizeof(int);
-    return;
+    return 1;
 }
 
 void* mymalloc(int blocknum ,int size){
@@ -92,7 +97,7 @@ void* mymalloc(int blocknum ,int size){
 	return mem[blocknum] + offset;
 }
 
-static void create_filenode(const char *filename, const struct stat *st)
+static int create_filenode(const char *filename, const struct stat *st)
 {
     /*filenode *new = (filenode *)malloc(sizeof(filenode));
     new->filename = (char *)malloc(strlen(filename) + 1);
@@ -101,8 +106,13 @@ static void create_filenode(const char *filename, const struct stat *st)
     memcpy(new->st, st, sizeof(struct stat));*/
     
     int i = find_blank_block();
-    if(i == -1) printf("there is no blank block");
-    init_block(i);
+    if(i == -1){
+    	printf("there is no blank block");
+    	return -ENOSPC;
+	}
+    if(init_block(i) == -1){
+    	return -ENOMEM;
+	}
     filenode *newnode = (filenode*)mymalloc(i ,sizeof(filenode));
     newnode->filename = (char*)mymalloc(i, strlen(filename) + 1);
     memcpy(newnode->filename, filename, strlen(filename) + 1);
@@ -115,6 +125,7 @@ static void create_filenode(const char *filename, const struct stat *st)
     
     newnode->next = root;
     root = newnode;
+    return 1;
 }
 
 static void *oshfs_init(struct fuse_conn_info *conn)
@@ -123,6 +134,9 @@ static void *oshfs_init(struct fuse_conn_info *conn)
 	//temp->next is root
 	filenode *temp = (filenode*)mymalloc(0, sizeof(filenode));
 	temp->next = NULL;
+	
+	find_start_at = 0;
+	
     return NULL;
 }
 
@@ -191,7 +205,14 @@ static int oshfs_write(const char *path, const char *buf, size_t size, off_t off
     while(now_space < offset){
     	if(next_block(cur_block) == -1){
     		i = find_blank_block();
-    		init_block(i);
+    		if(i == -1){
+                printf("there is no blank block");
+            	return -ENOSPC;
+        	}
+    		//init_block(i);
+    		if(init_block(i) == -1){
+            	return -ENOMEM;
+	        }
     		*(int*)mem[cur_block] = i;
     		*(int*)mem[i] = -1;
 		}
@@ -233,7 +254,14 @@ static int oshfs_write(const char *path, const char *buf, size_t size, off_t off
 	while(tempsize > 0){
 		if(next_block(cur_block) == -1){
 			i = find_blank_block();
-			init_block(i);
+			if(i == -1){
+    	        printf("there is no blank block");
+            	return -ENOSPC;
+	        }
+			//init_block(i);
+			if(init_block(i) == -1){
+            	return -ENOMEM;
+        	}
 			*(int*)mem[cur_block] = i;
     		*(int*)mem[i] = -1;
 		}
@@ -267,7 +295,14 @@ static int oshfs_truncate(const char *path, off_t size)
     		printf("truncate error: last block\n");
     		/*??? truncate want to have larger space ???*/
     		i = find_blank_block();
-			init_block(i);
+    		if(i == -1){
+            	printf("there is no blank block");
+    	        return -ENOSPC;
+	        }
+			//init_block(i);
+			if(init_block(i) == -1){
+            	return -ENOMEM;
+	        }
 			*(int*)mem[cur_block] = i;
     		*(int*)mem[i] = -1;
 		}
